@@ -5,16 +5,17 @@
  * own. This TUI-side companion tails the true-mem debug log and shows a toast
  * whenever the core stores a memory ("Stored <type> memory in <LTM|STM> ...").
  *
- * Exported as a plain object `{ id, setup }` (no runtime dependency on
- * @opencode/plugin/tui) so it stays trivially bundleable.
+ * Also fires an OS notification + sound via `attention.notify` when the user
+ * has attention enabled (skipped otherwise).
  */
 
 import { homedir } from 'os';
 import { join } from 'path';
-import { existsSync, openSync, closeSync, fstatSync, readSync, appendFileSync } from 'fs';
+import { existsSync, openSync, closeSync, fstatSync, readSync } from 'fs';
 
 const LOG_FILE = join(homedir(), '.true-mem', 'plugin-debug.log');
 const STORE_RE = /Stored\s+(\w+)\s+memory\s+in\s+(LTM|STM)\s+\(confidence:\s*([0-9.]+)/i;
+const TOAST_MS = 8000;
 
 function fileSize(): number {
   if (!existsSync(LOG_FILE)) return 0;
@@ -38,21 +39,24 @@ function fileSize(): number {
 export default {
   id: 'true-mem-tui',
   setup(context: any): () => void {
-    // Start from the current end of file so we only toast NEW saves.
+    // Start from the current end of file so we only notify on NEW saves.
     let offset = fileSize();
-    let carry = ''; // partial line buffer across reads
+    let carry = '';
 
-    // Load marker: proves the TUI host actually ran this plugin (helps verify
-    // the CLI/TUI surface without needing to see a toast).
-    try {
-      appendFileSync(join(homedir(), '.true-mem', 'tui-plugin.log'), `${new Date().toISOString()} setup (pid ${process.pid})\n`);
-    } catch {
-      /* ignore */
-    }
-
-    const toast = (title: string, message: string, variant = 'success') => {
+    const notify = (title: string, message: string) => {
       try {
-        context?.ui?.toast?.show?.({ title, message, variant, duration: 4000 });
+        context?.ui?.toast?.show?.({ title, message, variant: 'success', duration: TOAST_MS });
+      } catch {
+        /* ignore */
+      }
+      try {
+        // Best effort; skipped when the user has attention disabled.
+        void context?.attention?.notify?.({
+          title,
+          message,
+          notification: { when: 'always' },
+          sound: { name: 'done', volume: 0.6, when: 'always' },
+        });
       } catch {
         /* ignore */
       }
@@ -65,7 +69,7 @@ export default {
         try {
           const size = fstatSync(fd).size;
           if (size < offset) {
-            // Log rotated/truncated — restart from the beginning of the new file.
+            // Log rotated/truncated — restart from the beginning.
             offset = 0;
             carry = '';
           }
@@ -84,7 +88,7 @@ export default {
             const m = line.match(STORE_RE);
             if (m) {
               const [, classification, store, confidence] = m;
-              toast('🧠 Memory saved', `${classification} → ${store} (conf ${confidence})`);
+              notify('🧠 Memory saved', `${classification} → ${store} (conf ${confidence})`);
             }
           }
         } finally {
