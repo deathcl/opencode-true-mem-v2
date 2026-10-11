@@ -107,9 +107,8 @@ const FORWARD_EVENTS = new Set<string>([
   'session.error',
   'message.updated',
   'session.status',
-  // V2 does not emit a public "session.idle"; turn completion surfaces as
-  // step/execution lifecycle events. Map these to the core's idle handler.
-  'session.step.ended',
+  // V2 does not emit a public "session.idle"; turn completion surfaces as the
+  // execution lifecycle event. Map it to the core's idle handler.
   'session.execution.succeeded',
 ]);
 
@@ -117,6 +116,7 @@ const FORWARD_EVENTS = new Set<string>([
 // event is delivered to several subscriptions. Dedupe by event id on globalThis
 // (shared across module graphs in the same process) to collapse repeated work.
 const SEEN_EVENTS_KEY = Symbol.for('true-mem.v2.seen-event-ids');
+const LAST_IDLE_KEY = Symbol.for('true-mem.v2.last-idle-forward');
 
 function isDuplicateEvent(id: unknown): boolean {
   if (typeof id !== 'string' || !id) return false;
@@ -152,8 +152,19 @@ function forwardEvent(e: any, hooks: Hooks): void {
   if (type === 'session.status') {
     if (data.status !== 'idle') return;
     v1Type = 'session.idle';
-  } else if (type === 'session.step.ended' || type === 'session.execution.succeeded') {
+  } else if (type === 'session.execution.succeeded') {
     v1Type = 'session.idle';
+  }
+
+  // Coalesce synthesized idle to at most one per session per ~2s, shared across
+  // plugin instances in the process (V2 can emit several end-of-turn signals).
+  if (v1Type === 'session.idle') {
+    const g2 = globalThis as unknown as Record<symbol, Map<string, number>>;
+    const lastIdle = (g2[LAST_IDLE_KEY] ??= new Map<string, number>());
+    const sid = String(data.sessionID ?? data.id ?? '');
+    const now = Date.now();
+    if (now - (lastIdle.get(sid) ?? 0) < 2000) return;
+    lastIdle.set(sid, now);
   }
 
   const v1event = { type: v1Type, properties: { ...data, info: data } };

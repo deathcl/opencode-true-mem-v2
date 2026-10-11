@@ -87,7 +87,7 @@ export default {
       const items = [...pending];
       pending.clear();
       if (items.length === 1) {
-        showToast('🧠 Memory saved', items[0]);
+        showToast('🧠 Memory saved', items[0]!);
       } else {
         showToast('🧠 Memory saved', `${items.length} memories saved`);
       }

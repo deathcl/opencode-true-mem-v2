@@ -389,7 +389,7 @@ export class MemoryDatabase {
     };
 
     this.db.prepare(`
-      INSERT INTO sessions (id, project, started_at, status, metadata, transcript_path, transcript_watermark, message_watermark)
+      INSERT OR IGNORE INTO sessions (id, project, started_at, status, metadata, transcript_path, transcript_watermark, message_watermark)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       session.id,

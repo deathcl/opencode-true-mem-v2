@@ -593,6 +593,14 @@ async function processSessionIdle(
     return;
   }
 
+  // Self-heal: if 'session.created' was never delivered for this session, no
+  // row exists, so getMessageWatermark() returns 0 and updateMessageWatermark()
+  // silently no-ops -> the entire history would be re-extracted every turn.
+  if (!state.db.getSession(effectiveSessionId)) {
+    state.db.createSession(effectiveSessionId, state.worktree, { agentType: 'opencode' });
+    log(`Self-healed missing session row: ${effectiveSessionId}`);
+  }
+
   // Global debounce: prevent rapid-fire extractions from multiple triggers
   if (!canExtract()) {
     return;
@@ -665,8 +673,14 @@ async function processSessionIdle(
       const humanMessages = roleLines.filter(line => line.role === 'user');
       log(`Debug: Processing ${humanMessages.length} Human messages for memory extraction`);
 
+      // Dedupe identical user text within this pass (retries / duplicated fetch)
+      const seenTextsForPass = new Set<string>();
+
       for (const humanMsg of humanMessages) {
         const { text, role } = humanMsg;
+
+        if (text && seenTextsForPass.has(text)) continue;
+        if (text) seenTextsForPass.add(text);
 
         // Get signals specific to this message
         const msgSignals = matchAllPatterns(text);
