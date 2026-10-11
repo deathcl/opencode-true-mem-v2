@@ -113,9 +113,31 @@ const FORWARD_EVENTS = new Set<string>([
   'session.execution.succeeded',
 ]);
 
+// OpenCode instantiates the plugin more than once per process, so the same V2
+// event is delivered to several subscriptions. Dedupe by event id on globalThis
+// (shared across module graphs in the same process) to collapse repeated work.
+const SEEN_EVENTS_KEY = Symbol.for('true-mem.v2.seen-event-ids');
+
+function isDuplicateEvent(id: unknown): boolean {
+  if (typeof id !== 'string' || !id) return false;
+  const g = globalThis as unknown as Record<symbol, Set<string>>;
+  const seen = (g[SEEN_EVENTS_KEY] ??= new Set<string>());
+  if (seen.has(id)) return true;
+  seen.add(id);
+  if (seen.size > 8192) {
+    let removed = 0;
+    for (const v of seen) {
+      seen.delete(v);
+      if (++removed >= 4096) break;
+    }
+  }
+  return false;
+}
+
 function forwardEvent(e: any, hooks: Hooks): void {
   const type = e?.type;
   if (!type || typeof type !== 'string' || !FORWARD_EVENTS.has(type)) return;
+  if (isDuplicateEvent(e?.id)) return;
 
   const data = (e?.data ?? {}) as Record<string, unknown>;
 
