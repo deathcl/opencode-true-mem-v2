@@ -114,28 +114,39 @@ All filtering patterns support **10 languages**: English, Italian, Spanish, Fren
 
 ## Installation
 
-Add to your `~/.config/opencode/opencode.jsonc`:
+> **V2 port** — not published to npm; install from source. See [PORT-NOTES.md](./PORT-NOTES.md).
 
-```
-{
-  "plugin": [
-    "true-mem"
-  ]
-}
+```bash
+git clone https://github.com/ilahomesick/opencode-true-mem-v2 ~/true-mem-v2
+cd ~/true-mem-v2 && bun install && bun run build
 ```
 
-OpenCode will automatically download the plugin from npm.
+Then expose it to OpenCode V2:
 
-A `~/.true-mem/` directory will be created to store the SQLite database and debug logs.
+1. **Server plugin** — create `~/.config/opencode/plugins/true-mem-v2/index.ts`:
 
-After restarting OpenCode, you'll see a toast notification confirming the plugin is loaded:
+   ```ts
+   export { default } from "<abs-path-to-repo>/dist/entry.js";
+   ```
 
-```
-True-Mem vX.X.X
-Memory active.
-```
+2. **TUI toast companion** (optional) — make the bridge dir a package exposing `./tui`, then add it to
+   `~/.config/opencode/cli.json`:
 
-This confirms True-Mem is installed and working correctly.
+   ```jsonc
+   // ~/.config/opencode/plugins/true-mem-v2/package.json
+   { "name": "true-mem-v2", "type": "module", "exports": { ".": "./index.ts", "./tui": "./tui.ts" } }
+   ```
+   ```ts
+   // ~/.config/opencode/plugins/true-mem-v2/tui.ts
+   export { default } from "<abs-path-to-repo>/dist/tui.js";
+   ```
+   ```jsonc
+   // ~/.config/opencode/cli.json
+   { "plugins": ["<abs-path-to-bridge-dir>"] }
+   ```
+
+A `~/.true-mem/` directory stores the SQLite database and debug log. The plugin logs to
+`~/.true-mem/plugin-debug.log`; the TUI companion shows a toast when a memory is saved.
 
 ---
 

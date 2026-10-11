@@ -4,7 +4,6 @@
   "private": true,
   "description": "OpenCode V2 port of true-mem — persistent cognitive memory plugin (fork of rizal72/true-mem)",
   "main": "dist/entry.js",
-  "types": "dist/entry.d.ts",
   "type": "module",
   "exports": {
     ".": {

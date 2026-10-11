@@ -41,6 +41,8 @@ The **cognitive core is untouched** (classifier, patterns, decay, STM/LTM, SQLit
   limited.
 - The core can store **several memories per turn** (including tentative STM entries), and identical
   stores are merged by reconsolidation (no duplicate rows). The TUI toast coalesces these into one.
+- **Per-pass dedupe:** identical user text within a single extraction pass is de-duplicated, so a
+  legitimately repeated instruction inside one window may be stored once.
 - **Extraction runs for all top-level sessions** (upstream behavior).
 - Optional NLP embeddings remain off by default (Jaccard similarity).
 

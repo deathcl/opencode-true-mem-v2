@@ -33,11 +33,26 @@ interface V1MessageContainer {
   parts: V1Part[];
 }
 
+function contentToText(content: any): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content
+    .map((c: any) => (typeof c === 'string' ? c : (c?.text ?? '')))
+    .filter(Boolean)
+    .join('\n');
+}
+
 function toV1Message(m: any): V1MessageContainer {
   if (m?.type === 'user') {
     return {
       info: { role: 'user', id: m.id },
-      parts: [{ type: 'text', text: typeof m.text === 'string' ? m.text : '' }],
+      parts: [
+        {
+          type: 'text',
+          // V2 user messages carry `text`, but fall back to block content.
+          text: typeof m.text === 'string' ? m.text : contentToText(m.content),
+        },
+      ],
     };
   }
 
@@ -60,6 +75,9 @@ function toV1Message(m: any): V1MessageContainer {
       }
       return { type: 'text', text: '' };
     });
+    if (parts.length === 0 && typeof m.text === 'string') {
+      return { info: { role: 'assistant', id: m.id }, parts: [{ type: 'text', text: m.text }] };
+    }
     return { info: { role: 'assistant', id: m.id }, parts };
   }
 
@@ -117,6 +135,7 @@ const FORWARD_EVENTS = new Set<string>([
 // (shared across module graphs in the same process) to collapse repeated work.
 const SEEN_EVENTS_KEY = Symbol.for('true-mem.v2.seen-event-ids');
 const LAST_IDLE_KEY = Symbol.for('true-mem.v2.last-idle-forward');
+const ACTIVE_KEY = Symbol.for('true-mem.v2.active');
 
 function isDuplicateEvent(id: unknown): boolean {
   if (typeof id !== 'string' || !id) return false;
@@ -165,6 +184,10 @@ function forwardEvent(e: any, hooks: Hooks): void {
     const now = Date.now();
     if (now - (lastIdle.get(sid) ?? 0) < 2000) return;
     lastIdle.set(sid, now);
+    if (lastIdle.size > 4096) {
+      const cutoff = now - 120000;
+      for (const [k, t] of lastIdle) if (t < cutoff) lastIdle.delete(k);
+    }
   }
 
   const v1event = { type: v1Type, properties: { ...data, info: data } };
@@ -186,6 +209,21 @@ export default {
 
     const directory: string | undefined =
       ctx?.location?.directory ?? ctx?.location?.project?.directory ?? undefined;
+
+    // The host can run setup more than once per process (hot reload / repeated
+    // reconciliation). Dedupe hook registrations per location so memory isn't
+    // injected N times per prompt: take over from any previous instance.
+    const g = globalThis as unknown as Record<symbol, Map<string, () => void>>;
+    const active = (g[ACTIVE_KEY] ??= new Map<string, () => void>());
+    const locationKey = directory ?? '';
+    const previous = active.get(locationKey);
+    if (previous) {
+      try {
+        previous();
+      } catch {
+        /* ignore */
+      }
+    }
 
     // Fabricated V1 client backed by the V2 session API.
     const fakeClient: any = {
@@ -322,7 +360,7 @@ export default {
 
     log('V2 adapter: setup complete');
 
-    return () => {
+    const dispose = () => {
       try {
         controller.abort();
       } catch {
@@ -335,6 +373,9 @@ export default {
           /* ignore */
         }
       }
+      if (active.get(locationKey) === dispose) active.delete(locationKey);
     };
+    active.set(locationKey, dispose);
+    return dispose;
   },
 };

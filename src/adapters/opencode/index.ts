@@ -37,7 +37,15 @@ import {
 const childSessionIds = new Set<string>();
 
 export function markChildSession(sessionId: string): void {
-  if (sessionId) childSessionIds.add(sessionId);
+  if (!sessionId) return;
+  childSessionIds.add(sessionId);
+  if (childSessionIds.size > 4096) {
+    let removed = 0;
+    for (const id of childSessionIds) {
+      childSessionIds.delete(id);
+      if (++removed >= 2048) break;
+    }
+  }
 }
 
 // Debounce state for message.updated events
