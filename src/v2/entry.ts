@@ -222,7 +222,7 @@ function serializeMessages(messages: any): string {
       })
       .filter(Boolean)
       .join('\n\n')
-      .slice(0, 120000);
+      .slice(-120000); // keep the most recent messages (compaction fires on huge transcripts)
   } catch {
     return '';
   }
@@ -436,7 +436,10 @@ export default {
             { sessionID: event.sessionID } as any,
             vout,
           );
-          if (!vout.prompt) return; // compaction injection disabled / no memories
+          // V1 sets a prompt even with zero memories (buildCompactionPrompt(null));
+          // only take over the compaction when it ACTUALLY included memories,
+          // otherwise let the host perform its normal (message-shaped) compaction.
+          if (!vout.prompt.includes('## Relevant Memories from Previous Sessions')) return;
           const transcript = serializeMessages(event?.messages);
           const res = await ctx.generate.text({
             model: event.model,
