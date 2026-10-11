@@ -202,6 +202,32 @@ function forwardEvent(e: any, hooks: Hooks): void {
 // Plugin
 // ---------------------------------------------------------------------------
 
+function serializeMessages(messages: any): string {
+  try {
+    if (!Array.isArray(messages)) return '';
+    return messages
+      .map((m) => {
+        if (!m || typeof m !== 'object') return '';
+        const role = typeof m.role === 'string' ? m.role : typeof m.type === 'string' ? m.type : '';
+        let text = '';
+        if (typeof m.text === 'string') text = m.text;
+        else if (typeof m.content === 'string') text = m.content;
+        else if (Array.isArray(m.content)) {
+          text = m.content
+            .map((c: any) => (typeof c === 'string' ? c : (c?.text ?? '')))
+            .filter(Boolean)
+            .join('\n');
+        }
+        return text ? `${role}: ${text}` : '';
+      })
+      .filter(Boolean)
+      .join('\n\n')
+      .slice(0, 120000);
+  } catch {
+    return '';
+  }
+}
+
 export default {
   id: 'true-mem',
   async setup(ctx: any): Promise<() => void> {
@@ -216,6 +242,28 @@ export default {
     const g = globalThis as unknown as Record<symbol, Map<string, () => void>>;
     const active = (g[ACTIVE_KEY] ??= new Map<string, () => void>());
     const locationKey = directory ?? '';
+
+    const controller = new AbortController();
+    const registrations: Array<{ dispose: () => Promise<void> | void }> = [];
+    let disposed = false;
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      try {
+        controller.abort();
+      } catch {
+        /* ignore */
+      }
+      for (const r of registrations) {
+        try {
+          void Promise.resolve(r.dispose()).catch(() => {});
+        } catch {
+          /* ignore */
+        }
+      }
+      if (active.get(locationKey) === dispose) active.delete(locationKey);
+    };
+
     const previous = active.get(locationKey);
     if (previous) {
       try {
@@ -224,6 +272,9 @@ export default {
         /* ignore */
       }
     }
+    // Reserve this location's slot synchronously so a concurrent setup() call
+    // cannot slip past the empty window between takeover and registration.
+    active.set(locationKey, dispose);
 
     // Fabricated V1 client backed by the V2 session API.
     const fakeClient: any = {
@@ -259,8 +310,7 @@ export default {
       log(`V2 adapter: createTrueMemoryPlugin failed: ${err}`);
       throw err;
     }
-
-    const registrations: Array<{ dispose: () => Promise<void> | void }> = [];
+    if (disposed) return dispose;
 
     // --- prompt hook  <-  V1 "chat.message" (memory-list meta command) ---
     if (hooks['chat.message']) {
@@ -283,6 +333,14 @@ export default {
         }
       });
       registrations.push(reg);
+      if (disposed) {
+        try {
+          void Promise.resolve(reg.dispose()).catch(() => {});
+        } catch {
+          /* ignore */
+        }
+        return dispose;
+      }
     }
 
     // --- context hook  <-  V1 "experimental.chat.system.transform" ---
@@ -306,6 +364,14 @@ export default {
         }
       });
       registrations.push(reg);
+      if (disposed) {
+        try {
+          void Promise.resolve(reg.dispose()).catch(() => {});
+        } catch {
+          /* ignore */
+        }
+        return dispose;
+      }
     }
 
     // --- tool.execute.before  <-  V1 task/background_task sub-agent injection ---
@@ -323,6 +389,14 @@ export default {
         }
       });
       registrations.push(reg);
+      if (disposed) {
+        try {
+          void Promise.resolve(reg.dispose()).catch(() => {});
+        } catch {
+          /* ignore */
+        }
+        return dispose;
+      }
     }
 
     // --- tool.execute.after  <-  V1 post-tool-use bookkeeping ---
@@ -339,15 +413,53 @@ export default {
         }
       });
       registrations.push(reg);
+      if (disposed) {
+        try {
+          void Promise.resolve(reg.dispose()).catch(() => {});
+        } catch {
+          /* ignore */
+        }
+        return dispose;
+      }
     }
 
-    // NOTE: compaction injection is intentionally deferred for the first cut.
-    // V1 replaces the compaction prompt; V2 expects a produced summary
-    // (`event.result`). Leaving the normal model call untouched is safe; the
-    // core's `injectOnCompaction` path stays inert until reimplemented.
+    // --- compaction hook  <-  V1 "experimental.session.compacting" ---
+    // V1 replaced the compaction *prompt*; V2's `compaction` hook expects a
+    // produced *summary* (`event.result`). We run the V1 hook to build the
+    // memory-augmented prompt, then generate the summary ourselves. On any
+    // failure we leave `event.result` unset so the host summarizes normally.
+    if (hooks['experimental.session.compacting']) {
+      const reg = await ctx.session.hook('compaction', async (event: any) => {
+        try {
+          const vout: any = { prompt: '' };
+          await hooks['experimental.session.compacting']!(
+            { sessionID: event.sessionID } as any,
+            vout,
+          );
+          if (!vout.prompt) return; // compaction injection disabled / no memories
+          const transcript = serializeMessages(event?.messages);
+          const res = await ctx.generate.text({
+            model: event.model,
+            prompt: `${vout.prompt}\n\n${transcript}`,
+          });
+          const summary = typeof res?.text === 'string' ? res.text : '';
+          if (summary) event.result = { summary };
+        } catch (err) {
+          log(`V2 compaction hook error: ${err}`);
+        }
+      });
+      registrations.push(reg);
+      if (disposed) {
+        try {
+          void Promise.resolve(reg.dispose()).catch(() => {});
+        } catch {
+          /* ignore */
+        }
+        return dispose;
+      }
+    }
 
     // --- event stream  <-  V1 "event" hook ---
-    const controller = new AbortController();
     (async () => {
       try {
         for await (const e of ctx.event.subscribe({ signal: controller.signal })) {
@@ -360,22 +472,6 @@ export default {
 
     log('V2 adapter: setup complete');
 
-    const dispose = () => {
-      try {
-        controller.abort();
-      } catch {
-        /* ignore */
-      }
-      for (const r of registrations) {
-        try {
-          void r.dispose();
-        } catch {
-          /* ignore */
-        }
-      }
-      if (active.get(locationKey) === dispose) active.delete(locationKey);
-    };
-    active.set(locationKey, dispose);
     return dispose;
   },
 };

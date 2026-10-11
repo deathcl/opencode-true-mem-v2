@@ -35,10 +35,11 @@ The **cognitive core is untouched** (classifier, patterns, decay, STM/LTM, SQLit
 
 ## Known limitations / differences from upstream
 
-- **Compaction injection** (`experimental.session.compacting`) is **not ported**. V1 replaced the
-  compaction *prompt*; V2's `compaction` hook expects a produced *summary*. With the default
-  `injectionMode: 1` (inject every prompt) memories re-enter the system prompt anyway, so the impact is
-  limited.
+- **Compaction injection** (`experimental.session.compacting`) **is now ported**. The V2 `compaction`
+  hook runs the V1 memory-augmented prompt through `ctx.generate.text` and sets `event.result`
+  (a `{ summary }`), falling back to the host summarizer on any error. Note that with the default
+  `injectionMode: 1` (inject every prompt) memories re-enter the system prompt anyway, so this path is
+  partly redundant.
 - The core can store **several memories per turn** (including tentative STM entries), and identical
   stores are merged by reconsolidation (no duplicate rows). The TUI toast coalesces these into one.
 - **Per-pass dedupe:** identical user text within a single extraction pass is de-duplicated, so a

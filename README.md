@@ -459,14 +459,10 @@ Want to contribute or test your own changes? Here's how:
    bun run build
    ```
 
-3. **Use your local version** in `~/.config/opencode/opencode.json`:
-   ```json
-   {
-     "plugin": [
-       "file:///path/to/your/fork/true-mem"
-     ]
-   }
-   ```
+3. **Wire it up** using the V2 [Installation](#installation) flow above — the bridge
+   directory (`~/.config/opencode/plugins/true-mem-v2/`) plus the `plugins` entry in
+   `~/.config/opencode/cli.json`. Note: the legacy V1 `"plugin": ["file://..."]` entry in
+   `opencode.json` is **not** read by the V2 loader, so don't use it.
 
 4. **Restart OpenCode** - it will load your local build instead of the npm version.
 

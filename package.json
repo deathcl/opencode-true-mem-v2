@@ -30,12 +30,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rizal72/true-mem.git"
+    "url": "git+https://github.com/ilahomesick/opencode-true-mem-v2.git"
   },
   "bugs": {
-    "url": "https://github.com/rizal72/true-mem/issues"
+    "url": "https://github.com/ilahomesick/opencode-true-mem-v2/issues"
   },
-  "homepage": "https://github.com/rizal72/true-mem#readme",
+  "homepage": "https://github.com/ilahomesick/opencode-true-mem-v2#readme",
   "files": [
     "dist/",
     "README.md",
