@@ -901,13 +901,13 @@ async function handlePostToolUse(
   const sessionId = state.currentSessionId;
   if (!sessionId) return;
   
-  const toolOutput = output.output && output.output.length > 2000
-    ? output.output.slice(0, 2000) + '...[truncated]'
-    : (output.output ?? '');
-  
+  const truncate = (s: string): string =>
+    s.length > 2000 ? s.slice(0, 2000) + '...[truncated]' : s;
+  const toolOutput = truncate(output.output ?? '');
+  const toolInput = truncate(JSON.stringify(input.args) ?? '');
   state.db.createEvent(sessionId, 'PostToolUse', '', {
     toolName: input.tool,
-    toolInput: JSON.stringify(input.args),
+    toolInput,
     toolOutput,
   });
 }
@@ -999,13 +999,19 @@ function extractConversationText(messages: MessageContainer[]): string {
         const text = (part as { text: string }).text;
 
         // Skip parts that contain any injection marker (prevents re-extracting injected content)
-        const hasInjectionMarker = injectionMarkers.some(marker => marker.test(text));
+        const hasInjectionMarker = injectionMarkers.some(marker => {
+          marker.lastIndex = 0;
+          return marker.test(text);
+        });
         if (hasInjectionMarker) {
           continue; // Skip this part entirely
         }
 
         // Skip parts that look like tool execution or results
-        const hasToolMarker = toolMarkers.some(marker => marker.test(text));
+        const hasToolMarker = toolMarkers.some(marker => {
+          marker.lastIndex = 0;
+          return marker.test(text);
+        });
         if (hasToolMarker) {
           continue; // Skip this part entirely
         }
@@ -1071,13 +1077,19 @@ function extractConversationTextWithRoles(messages: MessageContainer[]): {
         const text = (part as { text: string }).text;
 
         // Skip parts that contain any injection marker (prevents re-extracting injected content)
-        const hasInjectionMarker = injectionMarkers.some(marker => marker.test(text));
+        const hasInjectionMarker = injectionMarkers.some(marker => {
+          marker.lastIndex = 0;
+          return marker.test(text);
+        });
         if (hasInjectionMarker) {
           continue; // Skip this part entirely
         }
 
         // Skip parts that look like tool execution or results
-        const hasToolMarker = toolMarkers.some(marker => marker.test(text));
+        const hasToolMarker = toolMarkers.some(marker => {
+          marker.lastIndex = 0;
+          return marker.test(text);
+        });
         if (hasToolMarker) {
           continue; // Skip this part entirely
         }

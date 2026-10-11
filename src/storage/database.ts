@@ -522,13 +522,7 @@ export class MemoryDatabase {
 
           switch (action.type) {
             case 'duplicate':
-              // Increment frequency and return updated memory (no new insert)
-              const existingMemoryRow = this.db.prepare(
-                `SELECT * FROM memory_units WHERE id = ?`
-              ).get(action.updatedMemory.id) as any;
-              if (existingMemoryRow) {
-                this.incrementFrequency(existingMemoryRow.id);
-              }
+              // handleDuplicate() already incremented frequency; don't double-count.
               return action.updatedMemory;
 
             case 'conflict':
@@ -551,8 +545,8 @@ export class MemoryDatabase {
     try {
       // Phase 0: Check for exact duplicate by content hash (O(1) lookup)
       const exactDuplicate = this.db.prepare(
-        `SELECT * FROM memory_units WHERE content_hash = ? AND status = 'active' LIMIT 1`
-      ).get(contentHash) as any;
+        `SELECT * FROM memory_units WHERE content_hash = ? AND status = 'active' AND project_scope IS ? LIMIT 1`
+      ).get(contentHash, features.projectScope ?? null) as any;
 
       if (exactDuplicate) {
         // Found exact duplicate - increment frequency and return
@@ -650,7 +644,11 @@ export class MemoryDatabase {
       this.db.exec('COMMIT');
       return memory;
     } catch (error) {
-      this.db.exec('ROLLBACK');
+      try {
+        this.db.exec('ROLLBACK');
+      } catch {
+        /* transaction already committed or absent */
+      }
       throw error;
     }
   }

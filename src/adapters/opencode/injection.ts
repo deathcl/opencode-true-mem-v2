@@ -172,8 +172,8 @@ export async function selectMemoriesForInjection(
     return allMemories;
   }
   
-  const globalMemories = allMemories.filter(m => m.projectScope === null);
-  const projectMemories = allMemories.filter(m => m.projectScope !== null);
+  const globalMemories = allMemories.filter(m => m.projectScope == null);
+  const projectMemories = allMemories.filter(m => m.projectScope != null);
   
   // Helper: Estimate tokens (1 token ≈ 4 chars)
   const estimateTokens = (text: string): number => Math.ceil(text.length / 4);

@@ -63,12 +63,16 @@ function toV1Message(m: any): V1MessageContainer {
       if (c?.type === 'reasoning') return { type: 'reasoning', text: c.text ?? '' };
       if (c?.type === 'tool') {
         const state = c.state ?? {};
+        const rawOutput = c.output ?? state.output ?? '';
         return {
           type: 'tool',
           tool: c.name ?? c.tool ?? c.id,
           state: {
             status: c.status ?? state.status ?? 'completed',
-            output: c.output ?? state.output ?? '',
+            output:
+              typeof rawOutput === 'string'
+                ? rawOutput
+                : JSON.stringify(rawOutput).slice(0, 2000),
             input: c.input ?? state.input,
           },
         };
@@ -325,7 +329,7 @@ export default {
             .filter((p: any) => p?.type === 'text')
             .map((p: any) => p.text ?? '')
             .join('');
-          if (typeof newText === 'string' && newText !== event.prompt.text) {
+          if (typeof newText === 'string' && newText !== (event.prompt?.text ?? '')) {
             event.prompt.text = newText;
           }
         } catch (err) {
