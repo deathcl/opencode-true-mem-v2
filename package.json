@@ -8,10 +8,13 @@
   "exports": {
     ".": {
       "import": "./dist/entry.js"
+    },
+    "./tui": {
+      "import": "./dist/tui.js"
     }
   },
   "scripts": {
-    "build": "bun build src/v2/entry.ts --outdir dist --target bun --format esm && bun build src/memory/embedding-worker.ts --outdir dist/memory --target bun --format esm",
+    "build": "bun build src/v2/entry.ts --outdir dist --target bun --format esm && bun build src/tui.ts --outdir dist --target bun --format esm && bun build src/memory/embedding-worker.ts --outdir dist/memory --target bun --format esm",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
