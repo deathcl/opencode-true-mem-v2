@@ -2,19 +2,16 @@
   "name": "true-mem",
   "version": "1.4.1",
   "description": "Persistent memory plugin for OpenCode with cognitive psychology-based memory management",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "dist/entry.js",
+  "types": "dist/entry.d.ts",
   "type": "module",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/entry.js"
     }
   },
   "scripts": {
-    "preversion": "bun run build",
-    "build": "bun build src/index.ts --outdir dist --target bun --format esm && tsc --emitDeclarationOnly && bun build src/memory/embedding-worker.ts --outdir dist/memory --target bun --format esm",
-    "dev": "bun build src/index.ts --outdir dist --target bun --format esm --watch",
+    "build": "bun build src/v2/entry.ts --outdir dist --target bun --format esm && bun build src/memory/embedding-worker.ts --outdir dist/memory --target bun --format esm",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [

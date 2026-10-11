@@ -31,6 +31,15 @@ import {
   shouldInjectResumedSession 
 } from './injection-tracker.js';
 
+// V2 child-session registry (populated by the V2 adapter from session.created
+// events that carry a parentID). Used to skip sub-agent extraction when the V2
+// session-id format does not include the legacy "-task-" substring.
+const childSessionIds = new Set<string>();
+
+export function markChildSession(sessionId: string): void {
+  if (sessionId) childSessionIds.add(sessionId);
+}
+
 // Debounce state for message.updated events
 let messageDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingMessageEvent: { properties: unknown } | null = null;
@@ -165,8 +174,9 @@ function getSessionIdFromEvent(properties?: Record<string, unknown>): string | u
 
 // Sub-agent detection helper
 function isSubAgentSession(sessionId: string): boolean {
-  // Heuristic: sub-agent sessions typically contain "-task-" in the ID
-  return sessionId.includes('-task-');
+  // V1 heuristic: sub-agent sessions contained "-task-" in the ID.
+  // V2: also consult the child-session registry (sessions created with a parentID).
+  return sessionId.includes('-task-') || childSessionIds.has(sessionId);
 }
 
 // Debounce helper for message.updated events
