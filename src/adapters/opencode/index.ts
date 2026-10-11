@@ -56,9 +56,80 @@ let pendingMessageEvent: { properties: unknown } | null = null;
 let lastExtractionTime = 0;
 const MIN_EXTRACTION_INTERVAL = 2000; // 2 seconds minimum between extractions
 
+// Bounded retry for extraction jobs dropped by the global debounce.
+// A debounced idle may carry the LAST turn's messages, so instead of
+// silently dropping the job we re-enqueue it once after the debounce window,
+// for a bounded number of attempts (never an infinite loop).
+const EXTRACTION_RETRY_DELAY_MS = MIN_EXTRACTION_INTERVAL + 500;
+const MAX_EXTRACTION_RETRIES = 3;
+const extractionRetryAttempts = new Map<string, number>();
+const extractionRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Clear any pending debounce-retry for a session (both the counter and the timer).
+ */
+function clearExtractionRetry(sessionId: string): void {
+  extractionRetryAttempts.delete(sessionId);
+  const timer = extractionRetryTimers.get(sessionId);
+  if (timer) {
+    clearTimeout(timer);
+    extractionRetryTimers.delete(sessionId);
+  }
+}
+
+/**
+ * Schedule ONE delayed re-enqueue of a debounced extraction job.
+ * Bounded by MAX_EXTRACTION_RETRIES per session, and at most one pending
+ * retry timer per session, so this can never loop forever.
+ */
+function scheduleExtractionRetry(
+  state: TrueMemoryAdapterState,
+  sessionId: string
+): void {
+  const attempts = extractionRetryAttempts.get(sessionId) ?? 0;
+
+  if (attempts >= MAX_EXTRACTION_RETRIES) {
+    log(`Skipping extraction: retry limit reached for ${sessionId} (${attempts}/${MAX_EXTRACTION_RETRIES})`);
+    clearExtractionRetry(sessionId);
+    return;
+  }
+
+  // One pending retry per session: extra debounced idles are absorbed here.
+  if (extractionRetryTimers.has(sessionId)) {
+    log(`Skipping extraction: retry already pending for ${sessionId}`);
+    return;
+  }
+
+  // Keep the retry bookkeeping bounded (defensive; entries are removed on
+  // success or when the retry limit is reached).
+  if (extractionRetryAttempts.size > 1024) {
+    for (const key of extractionRetryAttempts.keys()) {
+      extractionRetryAttempts.delete(key);
+      break;
+    }
+  }
+
+  const attempt = attempts + 1;
+  extractionRetryAttempts.set(sessionId, attempt);
+  log(`Extraction debounced: scheduling retry ${attempt}/${MAX_EXTRACTION_RETRIES} for ${sessionId} in ${EXTRACTION_RETRY_DELAY_MS}ms`);
+
+  const timer = setTimeout(() => {
+    extractionRetryTimers.delete(sessionId);
+    log(`Re-enqueueing debounced extraction for ${sessionId} (retry ${attempt}/${MAX_EXTRACTION_RETRIES})`);
+    queueExtractionJob(state, sessionId);
+  }, EXTRACTION_RETRY_DELAY_MS);
+
+  // Do not hold the event loop open just for a retry.
+  if (typeof (timer as { unref?: () => void }).unref === 'function') {
+    (timer as { unref: () => void }).unref();
+  }
+  extractionRetryTimers.set(sessionId, timer);
+}
+
 // Cache for context extraction (avoid repeated API calls)
 const contextCache = new Map<string, { context: string; timestamp: number }>();
 const CACHE_TTL = 5000; // 5 seconds
+const MAX_CONTEXT_CACHE_ENTRIES = 100;
 
 // Persist worktree across plugin restarts (OpenCode lifecycle issue)
 // Using file-based persistence because module-level variables don't survive plugin reloads
@@ -141,8 +212,22 @@ async function extractQueryContextFromInput(
     const fullContext = contextParts.join(' | ');
     const truncatedContext = fullContext.slice(-500); // Truncate to 500 chars
     
-    // Update cache
-    contextCache.set(sessionId, { context: truncatedContext, timestamp: Date.now() });
+    // Update cache - sweep expired entries first so the map cannot grow
+    // one entry per session forever (entries were only TTL-checked on read).
+    const now = Date.now();
+    for (const [key, entry] of contextCache) {
+      if (now - entry.timestamp >= CACHE_TTL) {
+        contextCache.delete(key);
+      }
+    }
+    contextCache.set(sessionId, { context: truncatedContext, timestamp: now });
+
+    // Hard cap for bursts that fit inside the TTL window (insertion order = oldest first).
+    while (contextCache.size > MAX_CONTEXT_CACHE_ENTRIES) {
+      const oldestKey = contextCache.keys().next().value;
+      if (oldestKey === undefined) break;
+      contextCache.delete(oldestKey);
+    }
     
     return truncatedContext;
   } catch (error) {
@@ -609,10 +694,16 @@ async function processSessionIdle(
     log(`Self-healed missing session row: ${effectiveSessionId}`);
   }
 
-  // Global debounce: prevent rapid-fire extractions from multiple triggers
+  // Global debounce: prevent rapid-fire extractions from multiple triggers.
+  // A debounced idle may carry the LAST turn's messages, so it must not be
+  // dropped silently: re-enqueue it once (bounded) after the debounce window.
   if (!canExtract()) {
+    scheduleExtractionRetry(state, effectiveSessionId);
     return;
   }
+
+  // Debounce window is open again - drop any pending retry bookkeeping.
+  clearExtractionRetry(effectiveSessionId);
 
   const watermark = state.db.getMessageWatermark(effectiveSessionId);
 
@@ -836,18 +927,26 @@ async function handleSessionEnd(
   const effectiveSessionId = sessionId ?? state.currentSessionId;
   if (!effectiveSessionId) return;
 
-  // ✅ ESEGUI maintenance alla fine della sessione (non blocca startup)
-  try {
-    const decayed = state.db.applyDecay();
-    const promoted = state.db.runConsolidation();
-    if (decayed > 0 || promoted > 0) {
-      log(`Maintenance: decayed ${decayed} memories, promoted ${promoted} to LTM`);
+  const reason = eventType === 'session.error' ? 'abandoned' : 'normal';
+
+  // Maintenance runs at the end of a TOP-LEVEL session only: it is
+  // O(all memories). V2 reports sub-agent sessions via session.deleted too,
+  // so use the same guard as processSessionIdle to skip the sweep for them
+  // (the parent session's end will still perform it).
+  if (isSubAgentSession(effectiveSessionId)) {
+    log(`Skipping maintenance: sub-agent session detected (${effectiveSessionId})`);
+  } else {
+    try {
+      const decayed = state.db.applyDecay();
+      const promoted = state.db.runConsolidation();
+      if (decayed > 0 || promoted > 0) {
+        log(`Maintenance: decayed ${decayed} memories, promoted ${promoted} to LTM`);
+      }
+    } catch (err) {
+      log(`Maintenance error: ${err}`);
     }
-  } catch (err) {
-    log(`Maintenance error: ${err}`);
   }
 
-  const reason = eventType === 'session.error' ? 'abandoned' : 'normal';
   state.db.endSession(effectiveSessionId, reason === 'abandoned' ? 'abandoned' : 'completed');
   state.currentSessionId = null;
   log(`Session ended: ${effectiveSessionId} (${reason})`);
@@ -905,6 +1004,14 @@ async function handlePostToolUse(
     s.length > 2000 ? s.slice(0, 2000) + '...[truncated]' : s;
   const toolOutput = truncate(output.output ?? '');
   const toolInput = truncate(JSON.stringify(input.args) ?? '');
+
+  // Self-heal: 'session.created' may never have been delivered, so the session
+  // row might not exist yet (only processSessionIdle healed that case).
+  if (!state.db.getSession(sessionId)) {
+    state.db.createSession(sessionId, state.worktree, { agentType: 'opencode' });
+    log(`Self-healed missing session row: ${sessionId}`);
+  }
+
   state.db.createEvent(sessionId, 'PostToolUse', '', {
     toolName: input.tool,
     toolInput,

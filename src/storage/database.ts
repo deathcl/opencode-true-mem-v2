@@ -719,10 +719,17 @@ export class MemoryDatabase {
   async vectorSearch(queryTextOrEmbedding: Float32Array | string, currentProject?: string, limit: number = 10): Promise<MemoryUnit[]> {
     this.ensureInit();
 
-    // Handle both string query and Float32Array (for backward compatibility)
-    const queryText = typeof queryTextOrEmbedding === 'string'
-      ? queryTextOrEmbedding
-      : (queryTextOrEmbedding.length === 0 ? '' : ''); // If embedding is empty, use empty query
+    // Handle both string query and Float32Array (for backward compatibility).
+    // A raw embedding cannot be compared with Jaccard text similarity: fall
+    // back to strength ordering (logged below) rather than pretending it is
+    // an empty-string query.
+    let queryText: string;
+    if (typeof queryTextOrEmbedding === 'string') {
+      queryText = queryTextOrEmbedding;
+    } else {
+      log('vectorSearch: raw embedding query unsupported, falling back to strength ordering');
+      queryText = '';
+    }
 
     // Fallback: return top memories by strength when query is empty
     if (queryText.trim().length === 0) {

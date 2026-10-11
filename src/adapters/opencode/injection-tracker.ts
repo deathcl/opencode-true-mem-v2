@@ -19,6 +19,14 @@ const MAX_TRACKED_SESSIONS = 100;
  * Mark session as created (called on session.created event)
  */
 export function markSessionCreated(sessionId: string): void {
+  // Only initialise the flag for sessions we are not already tracking.
+  // Setting it unconditionally would reset a session that was already
+  // injected, defeating mode-0 "inject once" on duplicate session.created.
+  if (injectedSessions.has(sessionId)) {
+    log(`Session already tracked: ${sessionId.slice(0, 8)}...`);
+    return;
+  }
+
   // Cleanup old sessions if limit reached
   if (sessionOrder.length >= MAX_TRACKED_SESSIONS) {
     const oldestSession = sessionOrder.shift();
@@ -110,14 +118,20 @@ export async function shouldInjectResumedSession(
 ): Promise<boolean> {
   const TIMEOUT_MS = 3000;
   const MAX_MESSAGES_TO_CHECK = 10;
-  
+
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+
   try {
     // M1: Add timeout wrapper (3 seconds) for API call
     const response = await Promise.race([
       client.session.messages({ path: { id: sessionId } }),
-      new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('API timeout')), TIMEOUT_MS)
-      )
+      new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => reject(new Error('API timeout')), TIMEOUT_MS);
+        // Do not keep the event loop alive just for the race timeout.
+        if (typeof (timeoutHandle as { unref?: () => void }).unref === 'function') {
+          (timeoutHandle as { unref: () => void }).unref();
+        }
+      })
     ]) as Awaited<ReturnType<typeof client.session.messages>>;
     
     // M4: Add validation that response.data is an array
@@ -150,5 +164,11 @@ export async function shouldInjectResumedSession(
   } catch (error) {
     log(`Failed to check resumed session: ${error}`);
     return true; // Safe default: inject
+  } finally {
+    // Clear the race timeout so a settled race does not leak a pending timer
+    // (it would otherwise keep the event loop alive until it fires).
+    if (timeoutHandle !== undefined) {
+      clearTimeout(timeoutHandle);
+    }
   }
 }
