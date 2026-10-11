@@ -5,8 +5,9 @@
  * own. This TUI-side companion tails the true-mem debug log and shows a toast
  * whenever the core stores a memory ("Stored <type> memory in <LTM|STM> ...").
  *
- * Also fires an OS notification + sound via `attention.notify` when the user
- * has attention enabled (skipped otherwise).
+ * The core can store several memories per turn, so notifications are COALESCED:
+ * a short quiet window collapses a burst into a single toast ("N memories
+ * saved"), and exact duplicates are dropped. One active poller per process.
  */
 
 import { homedir } from 'os';
@@ -16,6 +17,10 @@ import { existsSync, openSync, closeSync, fstatSync, readSync } from 'fs';
 const LOG_FILE = join(homedir(), '.true-mem', 'plugin-debug.log');
 const STORE_RE = /Stored\s+(\w+)\s+memory\s+in\s+(LTM|STM)\s+\(confidence:\s*([0-9.]+)/i;
 const TOAST_MS = 8000;
+const COALESCE_MS = 3000;
+
+const ACTIVE_KEY = Symbol.for('true-mem.tui.active');
+const SEEN_KEY = Symbol.for('true-mem.tui.seen-lines');
 
 function fileSize(): number {
   if (!existsSync(LOG_FILE)) return 0;
@@ -39,18 +44,32 @@ function fileSize(): number {
 export default {
   id: 'true-mem-tui',
   setup(context: any): () => void {
-    // Start from the current end of file so we only notify on NEW saves.
+    const g = globalThis as unknown as Record<symbol, any>;
+
+    // Single active poller per process (the host re-runs setup on reload).
+    if (g[ACTIVE_KEY]) {
+      try {
+        g[ACTIVE_KEY].dispose?.();
+      } catch {
+        /* ignore */
+      }
+    }
+    const seen: Set<string> = (g[SEEN_KEY] ??= new Set<string>());
+
     let offset = fileSize();
     let carry = '';
 
-    const notify = (title: string, message: string) => {
+    // Coalescing buffer: distinct save descriptions accumulated for one burst.
+    const pending: Set<string> = new Set();
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const showToast = (title: string, message: string) => {
       try {
         context?.ui?.toast?.show?.({ title, message, variant: 'success', duration: TOAST_MS });
       } catch {
         /* ignore */
       }
       try {
-        // Best effort; skipped when the user has attention disabled.
         void context?.attention?.notify?.({
           title,
           message,
@@ -62,6 +81,24 @@ export default {
       }
     };
 
+    const flush = () => {
+      flushTimer = null;
+      if (pending.size === 0) return;
+      const items = [...pending];
+      pending.clear();
+      if (items.length === 1) {
+        showToast('🧠 Memory saved', items[0]);
+      } else {
+        showToast('🧠 Memory saved', `${items.length} memories saved`);
+      }
+    };
+
+    const onStore = (description: string) => {
+      pending.add(description);
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = setTimeout(flush, COALESCE_MS);
+    };
+
     const poll = () => {
       try {
         if (!existsSync(LOG_FILE)) return;
@@ -69,7 +106,6 @@ export default {
         try {
           const size = fstatSync(fd).size;
           if (size < offset) {
-            // Log rotated/truncated — restart from the beginning.
             offset = 0;
             carry = '';
           }
@@ -86,10 +122,21 @@ export default {
 
           for (const line of lines) {
             const m = line.match(STORE_RE);
-            if (m) {
-              const [, classification, store, confidence] = m;
-              notify('🧠 Memory saved', `${classification} → ${store} (conf ${confidence})`);
+            if (!m) continue;
+            const [, classification, store, confidence] = m;
+            const description = `${classification} → ${store} (conf ${confidence})`;
+            // Dedupe identical saves (ignore the log's timestamp prefix).
+            const key = description;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            if (seen.size > 4096) {
+              let removed = 0;
+              for (const v of seen) {
+                seen.delete(v);
+                if (++removed >= 2048) break;
+              }
             }
+            onStore(description);
           }
         } finally {
           closeSync(fd);
@@ -100,6 +147,14 @@ export default {
     };
 
     const timer = setInterval(poll, 2000);
-    return () => clearInterval(timer);
+
+    const dispose = () => {
+      clearInterval(timer);
+      if (flushTimer) clearTimeout(flushTimer);
+      if (g[ACTIVE_KEY]?.dispose === dispose) delete g[ACTIVE_KEY];
+    };
+    g[ACTIVE_KEY] = { dispose };
+
+    return dispose;
   },
 };
