@@ -12,7 +12,7 @@
  */
 
 import type { PluginInput, Hooks } from '@opencode-ai/plugin';
-import { createTrueMemoryPlugin, markChildSession } from '../adapters/opencode/index.js';
+import { createTrueMemoryPlugin, markChildSession, disposeTrueMemoryPlugin } from '../adapters/opencode/index.js';
 import { log } from '../logger.js';
 
 // ---------------------------------------------------------------------------
@@ -250,6 +250,9 @@ export default {
     const controller = new AbortController();
     const registrations: Array<{ dispose: () => Promise<void> | void }> = [];
     let disposed = false;
+    // Hooks object of THIS instance (set once createTrueMemoryPlugin resolves).
+    // Read (never assigned) by dispose(), so it must stay out of TDZ.
+    let instanceHooks: Hooks | null = null;
     const dispose = () => {
       if (disposed) return;
       disposed = true;
@@ -263,6 +266,16 @@ export default {
           void Promise.resolve(r.dispose()).catch(() => {});
         } catch {
           /* ignore */
+        }
+      }
+      // Release this instance's resources (its own SQLite connection). Each
+      // instance owns a separate connection, so this never touches the
+      // connection a newer instance is using.
+      if (instanceHooks) {
+        try {
+          disposeTrueMemoryPlugin(instanceHooks);
+        } catch (err) {
+          log(`V2 adapter: db dispose error: ${err}`);
         }
       }
       if (active.get(locationKey) === dispose) active.delete(locationKey);
@@ -314,7 +327,17 @@ export default {
       log(`V2 adapter: createTrueMemoryPlugin failed: ${err}`);
       throw err;
     }
-    if (disposed) return dispose;
+    instanceHooks = hooks;
+    // Torn down while we were still creating the instance: release the freshly
+    // created resources right away instead of leaking them.
+    if (disposed) {
+      try {
+        disposeTrueMemoryPlugin(hooks);
+      } catch (err) {
+        log(`V2 adapter: db dispose error: ${err}`);
+      }
+      return dispose;
+    }
 
     // --- prompt hook  <-  V1 "chat.message" (memory-list meta command) ---
     if (hooks['chat.message']) {

@@ -5,7 +5,7 @@
  * Uses loadConfig() from config/config.ts for user settings.
  */
 
-import type { PsychMemConfig, ScoringWeights, OpenCodeConfig, SweepConfig, ScopeQuotas, StorageLocation } from './types.js';
+import type { PsychMemConfig, ScoringWeights, OpenCodeConfig, SweepConfig, ScopeQuotas } from './types.js';
 import { getInjectionConfig } from './config/injection-mode.js';
 import { loadConfig } from './config/config.js';
 import { loadState } from './config/state.js';
@@ -68,74 +68,8 @@ export function getDefaultOpenCodeConfig(): OpenCodeConfig {
   };
 }
 
-/**
- * Get the full default config (runtime evaluation)
- */
-export function getDefaultConfig(): PsychMemConfig {
-  const maxMemories = getMaxMemories();
-  
-  // Get storage location from config
-  let storageLocation: StorageLocation = 'legacy';
-  try {
-    const { loadConfig } = require('./config/config.js');
-    storageLocation = loadConfig().storageLocation;
-  } catch {
-    // Config not loaded yet, use legacy
-  }
-  
-  // Build dbPath based on storage location
-  const dbPath = storageLocation === 'opencode'
-    ? '~/.config/opencode/true-mem/memory.db'
-    : '~/.true-mem/memory.db';
-  
-  return {
-    agentType: 'opencode',
-    dbPath,
-
-    // Decay rates (per hour)
-    stmDecayRate: 0.05,     // ~32-hour half-life
-    ltmDecayRate: 0.01,     // Slow decay
-
-    // Consolidation thresholds
-    stmToLtmStrengthThreshold: 0.7,
-    stmToLtmFrequencyThreshold: 3,
-
-    // Scoring weights
-    scoringWeights: DEFAULT_SCORING_WEIGHTS,
-
-    // Retrieval settings
-    defaultRetrievalLimit: 20,
-    maxContextTokens: 4000,
-
-    // Max memories configuration
-    maxMemories,
-    maxTokensForMemories: 4000,
-
-    // Scope quotas computed at initialization
-    scopeQuotas: getScopeQuotas(maxMemories),
-
-    // Auto-promote to LTM
-    autoPromoteToLtm: ['learning', 'decision'],
-
-    // Memory limits
-    maxMemoriesPerStop: 7,
-    deduplicationThreshold: 0.7,
-
-    // Context sweep
-    sweep: DEFAULT_SWEEP_CONFIG,
-
-    // OpenCode-specific
-    opencode: getDefaultOpenCodeConfig(),
-
-    // True-Mem improvement: decay only episodic
-    applyDecayOnlyToEpisodic: true,
-    decayThreshold: 0.1,
-  };
-}
-
 // Backward compatibility: keep DEFAULT_CONFIG for existing code
 // Note: dbPath field is ignored - actual database path is computed from storageLocation via getStorageDir()
-// Use getDefaultConfig() for runtime-aware configuration
 export const DEFAULT_CONFIG: PsychMemConfig = {
   agentType: 'opencode',
   dbPath: '~/.true-mem/memory.db',

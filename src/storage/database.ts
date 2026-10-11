@@ -134,7 +134,6 @@ export class MemoryDatabase {
   private db!: SqliteDatabase;
   private config: PsychMemConfig;
   private initialized: boolean = false;
-  private _inTransaction: boolean = false;
 
   constructor(config: Partial<PsychMemConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };

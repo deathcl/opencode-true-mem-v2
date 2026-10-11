@@ -48,6 +48,26 @@ export function markChildSession(sessionId: string): void {
   }
 }
 
+// Per-instance disposal registry.
+//
+// Every createTrueMemoryPlugin() call opens its OWN SQLite connection, and the
+// host (OpenCode V2) can instantiate the plugin again for the same location
+// (hot reload / takeover). executeShutdown() is never called, so without this
+// registry each reload would leak one connection. Disposal is scoped to the
+// instance it belongs to: it closes only THAT instance's connection and never
+// one a newer instance is using.
+const instanceDisposers = new WeakMap<Hooks, () => void>();
+
+/**
+ * Dispose a plugin instance created by createTrueMemoryPlugin().
+ * Releases the instance's database connection. Safe to call twice.
+ */
+export function disposeTrueMemoryPlugin(hooks: Hooks): void {
+  const disposer = instanceDisposers.get(hooks);
+  if (!disposer) return;
+  disposer();
+}
+
 // Debounce state for message.updated events
 let messageDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 let pendingMessageEvent: { properties: unknown } | null = null;
@@ -324,8 +344,16 @@ export async function createTrueMemoryPlugin(
   const db = await createMemoryDatabase(config);
   log('Database initialized');
 
-  // Register shutdown handler for database
-  registerShutdownHandler('database', () => db.close());
+  // Per-instance disposal: the V2 adapter calls disposeTrueMemoryPlugin() when
+  // the plugin instance is torn down, so the connection is released instead of
+  // leaking one on every hot reload.
+  const disposeInstance = () => {
+    try {
+      db.close();
+    } catch (err) {
+      log(`Database dispose error: ${err}`);
+    }
+  };
 
   // Register shutdown handler for embeddings
   registerShutdownHandler('embeddings', () => {
@@ -387,7 +415,7 @@ export async function createTrueMemoryPlugin(
   // Log to file-based logger only (to avoid overwriting OpenCode TUI during lazy initialization)
   log(startupMessage);
 
-  return {
+  const hooks: Hooks = {
     event: async ({ event }) => {
       // Skip noisy events
       const silentEvents = new Set(['message.part.delta', 'message.part.updated', 'session.diff']);
@@ -527,7 +555,10 @@ export async function createTrueMemoryPlugin(
     'tool.execute.after': async (input, output) => {
       log(`tool.execute.after: ${input.tool}`);
 
-      if (!state.currentSessionId && input.sessionID) {
+      // Only adopt the session id from a TOP-LEVEL session. Without this guard a
+      // concurrent child/sub-agent session running in parallel would overwrite
+      // the tracked id and all subsequent bookkeeping would target the sub-agent.
+      if (!state.currentSessionId && input.sessionID && !isSubAgentSession(input.sessionID)) {
         state.currentSessionId = input.sessionID;
       }
 
@@ -638,6 +669,12 @@ export async function createTrueMemoryPlugin(
       }
     },
   };
+
+  // Bind this instance's disposer to its hooks object so the host can release
+  // exactly this instance's resources.
+  instanceDisposers.set(hooks, disposeInstance);
+
+  return hooks;
 }
 
 // Queue helper for session idle processing

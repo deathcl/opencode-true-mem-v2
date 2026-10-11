@@ -7,12 +7,15 @@
  *
  * The core can store several memories per turn, so notifications are COALESCED:
  * a short quiet window collapses a burst into a single toast ("N memories
- * saved"), and exact duplicates are dropped. One active poller per process.
+ * saved"). Burst entries are keyed by the full log line: the core log line
+ * carries no memory summary, so class/store/confidence alone would collapse two
+ * DIFFERENT memories into one toast. One active poller per process.
  */
 
 import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync, openSync, closeSync, fstatSync, readSync } from 'fs';
+import { createHash } from 'crypto';
 
 const LOG_FILE = join(homedir(), '.true-mem', 'plugin-debug.log');
 const STORE_RE = /Stored\s+(\w+)\s+memory\s+in\s+(LTM|STM)\s+\(confidence:\s*([0-9.]+)/i;
@@ -21,6 +24,16 @@ const COALESCE_MS = 3000;
 
 const ACTIVE_KEY = Symbol.for('true-mem.tui.active');
 const SEEN_KEY = Symbol.for('true-mem.tui.seen-lines');
+
+/**
+ * Stable key for one stored-memory log line.
+ * The line has no memory summary, so the discriminator must be the line itself
+ * (classification, store, confidence, role, reason + logger timestamp) - that
+ * is the only thing that makes two saves in the same burst distinguishable.
+ */
+function lineKey(line: string): string {
+  return createHash('sha1').update(line).digest('hex').slice(0, 16);
+}
 
 function fileSize(): number {
   if (!existsSync(LOG_FILE)) return 0;
@@ -59,8 +72,10 @@ export default {
     let offset = fileSize();
     let carry = '';
 
-    // Coalescing buffer: distinct save descriptions accumulated for one burst.
-    const pending: Set<string> = new Set();
+    // Coalescing buffer: distinct saves accumulated for one burst, keyed by log
+    // line so two DIFFERENT memories with the same class/store/confidence still
+    // count as two separate saves.
+    const pending: Map<string, string> = new Map();
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
     const showToast = (title: string, message: string) => {
@@ -84,7 +99,7 @@ export default {
     const flush = () => {
       flushTimer = null;
       if (pending.size === 0) return;
-      const items = [...pending];
+      const items = [...pending.values()];
       pending.clear();
       if (items.length === 1) {
         showToast('🧠 Memory saved', items[0]!);
@@ -93,8 +108,8 @@ export default {
       }
     };
 
-    const onStore = (description: string) => {
-      pending.add(description);
+    const onStore = (key: string, description: string) => {
+      pending.set(key, description);
       if (flushTimer) clearTimeout(flushTimer);
       flushTimer = setTimeout(flush, COALESCE_MS);
     };
@@ -125,8 +140,10 @@ export default {
             if (!m) continue;
             const [, classification, store, confidence] = m;
             const description = `${classification} → ${store} (conf ${confidence})`;
-            // Dedupe identical saves (ignore the log's timestamp prefix).
-            const key = description;
+            // Dedupe identical log lines (the core log line has no summary, so
+            // the line itself is the discriminator); the timestamp prefix is
+            // part of the line, hence two distinct saves never collide.
+            const key = lineKey(line);
             if (seen.has(key)) continue;
             seen.add(key);
             if (seen.size > 4096) {
@@ -136,7 +153,7 @@ export default {
                 if (++removed >= 2048) break;
               }
             }
-            onStore(description);
+            onStore(key, description);
           }
         } finally {
           closeSync(fd);
