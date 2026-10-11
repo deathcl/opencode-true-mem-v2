@@ -2,6 +2,13 @@
 
 > A persistent memory plugin for OpenCode with cognitive psychology-based memory management.
 
+> [!IMPORTANT]
+> **This is a community V2 port.** Upstream [rizal72/true-mem](https://github.com/rizal72/true-mem) is
+> V1-only and does **not** load on OpenCode V2 (the V2 plugin API is a breaking change). This fork adds a
+> native V2 adapter (`src/v2/entry.ts`) plus a TUI companion (`src/tui.ts`) while reusing the original
+> cognitive core unchanged. Licensed MIT, © rizal72; see [PORT-NOTES.md](./PORT-NOTES.md) for scope and
+> known limitations.
+
 ---
 
 ## Table of Contents

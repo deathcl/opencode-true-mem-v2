@@ -1,7 +1,8 @@
 {
-  "name": "true-mem",
-  "version": "1.4.1",
-  "description": "Persistent memory plugin for OpenCode with cognitive psychology-based memory management",
+  "name": "opencode-true-mem-v2",
+  "version": "0.1.0",
+  "private": true,
+  "description": "OpenCode V2 port of true-mem — persistent cognitive memory plugin (fork of rizal72/true-mem)",
   "main": "dist/entry.js",
   "types": "dist/entry.d.ts",
   "type": "module",
