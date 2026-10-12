@@ -908,12 +908,15 @@ async function processSessionIdle(
               
               // Use contextual detection to determine if this should be project-scoped
               const scopeDecision = shouldBeProjectScope(text, context, hasGlobalKeyword);
-              scope = scopeDecision.isProjectScope ? state.worktree : null;
+              // A session running in the home directory is not a project: scope
+              // its memories globally (NULL) so they inject everywhere. Otherwise
+              // user preferences only reach sessions started in the home dir.
+              scope = scopeDecision.isProjectScope && state.worktree !== homedir() ? state.worktree : null;
               
               log(`Debug: Contextual scope detection: ${scopeDecision.isProjectScope ? 'PROJECT' : 'GLOBAL'} (confidence: ${scopeDecision.confidence.toFixed(2)}, reason: ${scopeDecision.reason})`);
             } else {
-              // Non-user-level memories default to project scope
-              scope = state.worktree;
+              // Non-user-level memories default to project scope (home dir = global, same guard as above)
+              scope = state.worktree !== homedir() ? state.worktree : null;
             }
 
             // Determine store: STM vs LTM
