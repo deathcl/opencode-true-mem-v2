@@ -114,14 +114,36 @@ All filtering patterns support **10 languages**: English, Italian, Spanish, Fren
 
 ## Installation
 
-> **V2 port** — not published to npm; install from source. See [PORT-NOTES.md](./PORT-NOTES.md).
+### From npm (recommended)
+
+Register the package in OpenCode V2 — no global install needed (OpenCode resolves it itself):
+
+1. **Server plugin** — in `~/.config/opencode/opencode.jsonc`:
+
+   ```jsonc
+   {
+     "plugins": ["true-mem-v2"]
+   }
+   ```
+
+2. **TUI toast companion** (optional) — in `~/.config/opencode/cli.json`:
+
+   ```jsonc
+   {
+     "plugins": ["true-mem-v2"]
+   }
+   ```
+
+On first run the plugin creates `~/.true-mem/` (SQLite database + config).
+
+### From source
 
 ```bash
-git clone https://github.com/ilahomesick/opencode-true-mem-v2 ~/true-mem-v2
-cd ~/true-mem-v2 && bun install && bun run build
+git clone https://github.com/deathcl/opencode-true-mem-v2 ~/opencode-true-mem-v2
+cd ~/opencode-true-mem-v2 && bun install && bun run build
 ```
 
-Then expose it to OpenCode V2:
+Then expose it to OpenCode V2 via a bridge directory:
 
 1. **Server plugin** — create `~/.config/opencode/plugins/true-mem-v2/index.ts`:
 

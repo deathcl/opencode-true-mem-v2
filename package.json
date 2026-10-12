@@ -1,7 +1,6 @@
 {
-  "name": "opencode-true-mem-v2",
-  "version": "0.1.0",
-  "private": true,
+  "name": "true-mem-v2",
+  "version": "0.2.0",
   "description": "OpenCode V2 port of true-mem — persistent cognitive memory plugin (fork of rizal72/true-mem)",
   "main": "dist/entry.js",
   "type": "module",
@@ -15,6 +14,7 @@
   },
   "scripts": {
     "build": "bun build src/v2/entry.ts --outdir dist --target bun --format esm && bun build src/tui.ts --outdir dist --target bun --format esm && bun build src/memory/embedding-worker.ts --outdir dist/memory --target bun --format esm",
+    "prepublishOnly": "bun run build",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [
@@ -30,12 +30,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ilahomesick/opencode-true-mem-v2.git"
+    "url": "git+https://github.com/deathcl/opencode-true-mem-v2.git"
   },
   "bugs": {
-    "url": "https://github.com/ilahomesick/opencode-true-mem-v2/issues"
+    "url": "https://github.com/deathcl/opencode-true-mem-v2/issues"
   },
-  "homepage": "https://github.com/ilahomesick/opencode-true-mem-v2#readme",
+  "homepage": "https://github.com/deathcl/opencode-true-mem-v2#readme",
   "files": [
     "dist/",
     "README.md",
