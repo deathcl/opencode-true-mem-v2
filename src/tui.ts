@@ -57,6 +57,15 @@ function fileSize(): number {
 export default {
   id: 'true-mem-tui',
   setup(context: any): () => void {
+    // Diagnostics: prove whether this setup runs and what the host actually
+    // provides. Silent optional-chaining hides everything otherwise.
+    try {
+      const fs2 = require('fs') as typeof import('fs');
+      const line = `[${new Date().toISOString()}] setup | ui=${Object.keys(context?.ui ?? {}).join(',')} | attention=${!!context?.attention} | toast=${typeof context?.ui?.toast?.show}\n`;
+      fs2.appendFileSync(LOG_FILE.replace('plugin-debug.log', 'tui-debug.log'), line);
+    } catch {
+      /* ignore */
+    }
     const g = globalThis as unknown as Record<symbol, any>;
 
     // Single active poller per process (the host re-runs setup on reload).
@@ -79,6 +88,12 @@ export default {
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
     const showToast = (title: string, message: string) => {
+      try {
+        const fs2 = require('fs') as typeof import('fs');
+        fs2.appendFileSync(LOG_FILE.replace('plugin-debug.log', 'tui-debug.log'), `[${new Date().toISOString()}] showToast: ${title} | ${message}\n`);
+      } catch {
+        /* ignore */
+      }
       try {
         context?.ui?.toast?.show?.({ title, message, variant: 'success', duration: TOAST_MS });
       } catch {
